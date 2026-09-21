@@ -5,8 +5,9 @@ A simple, fast, and elegant command-line tool written in Go to test your interne
 ## Features
 
 - **Instant Connection**: Uses Fast.com's API with dynamic fallback token retrieval.
+- **Full Dual-Direction Testing**: Measures both download and upload speeds with concurrent multi-stream throughput.
 - **Interactive TUI**: Live animated spinner, progress bar, real-time speed meter, bytes counter, latency probe, and completion summary card.
-- **Accurate Throughput**: Multi-stream concurrent downloads with exponential moving average (EMA) smoothing and atomic byte accounting.
+- **Accurate Throughput**: Multi-stream concurrent transfers with exponential moving average (EMA) smoothing and atomic byte accounting.
 - **Multiple Output Modes**:
   - Full interactive TUI (default)
   - Non-interactive plain text (`--simple`) for CI / logs
@@ -62,13 +63,15 @@ Custom duration (e.g. 5 seconds) and concurrency:
 Output:
 ```text
 Connecting to Fast.com...
-Testing... 24.50 Mbps | 6.2 MB | 60%
+Downloading... 24.50 Mbps | 15.3 MB | 100%
+Uploading...   18.20 Mbps | 11.4 MB | 100%
 
 === Results ===
 Download Speed:   22.80 Mbps
+Upload Speed:     18.20 Mbps
 Latency (RTT):    18 ms
-Data Transferred: 14.2 MB
-Total Time:       5.0s
+Data Transferred: 26.7 MB (down: 15.3 MB, up: 11.4 MB)
+Total Time:       10.5s
 Provider:         Viettel (171.253.233.49)
 Client Location:  Phu Dien, VN
 Server Node:      Singapore, SG
@@ -78,6 +81,29 @@ Server Node:      Singapore, SG
 ```bash
 ./fast -json -duration 5s
 ```
+Output:
+```json
+{
+  "download_speed_mbps": 22.8,
+  "upload_speed_mbps": 18.2,
+  "latency_ms": 18,
+  "total_bytes": 28000000,
+  "download_bytes": 16000000,
+  "upload_bytes": 12000000,
+  "duration_sec": 10,
+  "client": {
+    "ip": "171.253.233.49",
+    "isp": "Viettel",
+    "location": {
+      "city": "Phu Dien",
+      "country": "VN"
+    }
+  },
+  "targets": [
+    ...
+  ]
+}
+```
 
 ---
 
@@ -85,9 +111,11 @@ Server Node:      Singapore, SG
 
 | Flag | Shorthand | Default | Description |
 |---|---|---|---|
-| `-duration` | `-d` | `10s` | Test duration (e.g., `5s`, `10s`, `15s`) |
-| `-threads` | `-t` | `4` | Number of concurrent download streams |
+| `-duration` | `-d` | `10s` | Test duration per phase (e.g., `5s`, `10s`, `15s`) |
+| `-threads` | `-t` | `4` | Number of concurrent streams |
 | `-urls` | | `5` | Number of CDN target servers to query |
+| `-upload` | `-u` | `true` | Measure upload speed in addition to download |
+| `-no-upload` | | `false` | Disable upload speed test |
 | `-proxy` | `-p` | `""` | Proxy URL (`http://`, `https://`, `socks5://`) |
 | `-simple` | | `false` | Output simple text line (no TUI) |
 | `-json` | | `false` | Output test results as JSON |
@@ -115,6 +143,6 @@ Standard proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`) 
 ## Architecture
 
 - [`pkg/fast/client.go`](pkg/fast/client.go): Fast.com API integration, CDN target querying, latency probe, and unit formatting.
-- [`pkg/fast/tester.go`](pkg/fast/tester.go): Multi-threaded download engine, atomic rate accounting, and progress channel stream.
-- [`pkg/ui/tui.go`](pkg/ui/tui.go): Bubble Tea state machine, animated progress bar, responsive layouts, and results card.
+- [`pkg/fast/tester.go`](pkg/fast/tester.go): Multi-stream download and upload engine, atomic rate accounting, connection keep-alive reuse, and progress channel stream.
+- [`pkg/ui/tui.go`](pkg/ui/tui.go): Bubble Tea state machine, animated progress bar, responsive layouts, and dual-speed results card.
 - [`main.go`](main.go): CLI flags and execution runner.

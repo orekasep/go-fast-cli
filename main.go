@@ -24,6 +24,8 @@ func main() {
 		threadsFlag  int
 		urlCountFlag int
 		proxyFlag    string
+		uploadFlag   bool
+		noUploadFlag bool
 		simpleFlag   bool
 		jsonFlag     bool
 		versionFlag  bool
@@ -31,11 +33,14 @@ func main() {
 
 	flag.DurationVar(&durationFlag, "duration", 10*time.Second, "Test duration (e.g., 5s, 10s)")
 	flag.DurationVar(&durationFlag, "d", 10*time.Second, "Test duration (shorthand)")
-	flag.IntVar(&threadsFlag, "threads", 4, "Number of concurrent download streams")
-	flag.IntVar(&threadsFlag, "t", 4, "Number of concurrent download streams (shorthand)")
+	flag.IntVar(&threadsFlag, "threads", 4, "Number of concurrent streams")
+	flag.IntVar(&threadsFlag, "t", 4, "Number of concurrent streams (shorthand)")
 	flag.IntVar(&urlCountFlag, "urls", 5, "Number of CDN target servers to request")
 	flag.StringVar(&proxyFlag, "proxy", "", "Proxy URL (e.g., http://127.0.0.1:8080, socks5://127.0.0.1:1080)")
 	flag.StringVar(&proxyFlag, "p", "", "Proxy URL (shorthand)")
+	flag.BoolVar(&uploadFlag, "upload", true, "Measure upload speed in addition to download")
+	flag.BoolVar(&uploadFlag, "u", true, "Measure upload speed (shorthand)")
+	flag.BoolVar(&noUploadFlag, "no-upload", false, "Disable upload speed test")
 	flag.BoolVar(&simpleFlag, "simple", false, "Output in simple text format (no TUI)")
 	flag.BoolVar(&jsonFlag, "json", false, "Output results as JSON")
 	flag.BoolVar(&versionFlag, "version", false, "Print version and exit")
@@ -55,6 +60,10 @@ func main() {
 		os.Exit(0)
 	}
 
+	if noUploadFlag {
+		uploadFlag = false
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -63,6 +72,7 @@ func main() {
 		Threads:  threadsFlag,
 		URLCount: urlCountFlag,
 		Proxy:    proxyFlag,
+		Upload:   uploadFlag,
 	}
 	tester := fast.NewTester(cfg)
 
@@ -96,6 +106,7 @@ func runSimple(ctx context.Context, tester *fast.Tester) {
 	ch := tester.Run(ctx)
 
 	var lastProgress fast.Progress
+	var lastWasTesting bool
 	for p := range ch {
 		lastProgress = p
 		if p.Err != nil {
@@ -104,19 +115,44 @@ func runSimple(ctx context.Context, tester *fast.Tester) {
 		}
 
 		if p.Phase == fast.PhaseTesting {
-			fmt.Printf("\rTesting... %s | %s | %.0f%%",
+			lastWasTesting = true
+			fmt.Printf("\rDownloading... %s | %s | %.0f%%",
 				fast.FormatSpeed(p.InstantSpeedMbps),
-				fast.FormatBytes(p.BytesTransferred),
+				fast.FormatBytes(p.DownloadBytes),
+				p.Percent*100)
+		} else if p.Phase == fast.PhaseUploading {
+			if lastWasTesting {
+				fmt.Println()
+				lastWasTesting = false
+			}
+			fmt.Printf("\rUploading...   %s | %s | %.0f%%",
+				fast.FormatSpeed(p.InstantSpeedMbps),
+				fast.FormatBytes(p.UploadBytes),
 				p.Percent*100)
 		}
 	}
 
+	downloadSpeed := lastProgress.DownloadSpeedMbps
+	if downloadSpeed == 0 {
+		downloadSpeed = lastProgress.AverageSpeedMbps
+	}
+
 	fmt.Printf("\n\n=== Results ===\n")
-	fmt.Printf("Download Speed:   %s\n", fast.FormatSpeed(lastProgress.AverageSpeedMbps))
+	fmt.Printf("Download Speed:   %s\n", fast.FormatSpeed(downloadSpeed))
+	if lastProgress.UploadSpeedMbps > 0 {
+		fmt.Printf("Upload Speed:     %s\n", fast.FormatSpeed(lastProgress.UploadSpeedMbps))
+	}
 	if lastProgress.Latency > 0 {
 		fmt.Printf("Latency (RTT):    %d ms\n", lastProgress.Latency.Milliseconds())
 	}
-	fmt.Printf("Data Transferred: %s\n", fast.FormatBytes(lastProgress.BytesTransferred))
+	if lastProgress.UploadBytes > 0 {
+		fmt.Printf("Data Transferred: %s (down: %s, up: %s)\n",
+			fast.FormatBytes(lastProgress.BytesTransferred),
+			fast.FormatBytes(lastProgress.DownloadBytes),
+			fast.FormatBytes(lastProgress.UploadBytes))
+	} else {
+		fmt.Printf("Data Transferred: %s\n", fast.FormatBytes(lastProgress.BytesTransferred))
+	}
 	fmt.Printf("Total Time:       %.1fs\n", lastProgress.Elapsed.Seconds())
 	if lastProgress.Client != nil {
 		fmt.Printf("Provider:         %s (%s)\n", lastProgress.Client.ISP, lastProgress.Client.IP)
@@ -148,10 +184,18 @@ func runJSON(ctx context.Context, tester *fast.Tester, cfg fast.Config) {
 		client = *lastProgress.Client
 	}
 
+	downloadSpeed := lastProgress.DownloadSpeedMbps
+	if downloadSpeed == 0 {
+		downloadSpeed = lastProgress.AverageSpeedMbps
+	}
+
 	summary := fast.TestSummary{
-		DownloadSpeed: lastProgress.AverageSpeedMbps,
+		DownloadSpeed: downloadSpeed,
+		UploadSpeed:   lastProgress.UploadSpeedMbps,
 		Latency:       time.Duration(lastProgress.Latency.Milliseconds()),
 		TotalBytes:    lastProgress.BytesTransferred,
+		DownloadBytes: lastProgress.DownloadBytes,
+		UploadBytes:   lastProgress.UploadBytes,
 		Duration:      time.Duration(lastProgress.Elapsed.Seconds()),
 		Proxy:         cfg.Proxy,
 		Client:        client,

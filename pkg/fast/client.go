@@ -54,8 +54,11 @@ type SpeedtestResponse struct {
 // TestSummary summarizes the result of an internet speed test.
 type TestSummary struct {
 	DownloadSpeed float64        `json:"download_speed_mbps"`
+	UploadSpeed   float64        `json:"upload_speed_mbps,omitempty"`
 	Latency       time.Duration  `json:"latency_ms"`
 	TotalBytes    int64          `json:"total_bytes"`
+	DownloadBytes int64          `json:"download_bytes,omitempty"`
+	UploadBytes   int64          `json:"upload_bytes,omitempty"`
 	Duration      time.Duration  `json:"duration_sec"`
 	Proxy         string         `json:"proxy,omitempty"`
 	Client        ClientInfo     `json:"client"`

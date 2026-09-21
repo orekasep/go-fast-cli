@@ -3,6 +3,7 @@ package fast
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sync"
@@ -17,9 +18,13 @@ const (
 	PhaseInit Phase = iota
 	PhaseConnecting
 	PhaseTesting
+	PhaseUploading
 	PhaseCompleted
 	PhaseError
 )
+
+// PhaseDownloading is an alias for PhaseTesting.
+const PhaseDownloading = PhaseTesting
 
 func (p Phase) String() string {
 	switch p {
@@ -28,7 +33,9 @@ func (p Phase) String() string {
 	case PhaseConnecting:
 		return "Connecting"
 	case PhaseTesting:
-		return "Testing"
+		return "Downloading"
+	case PhaseUploading:
+		return "Uploading"
 	case PhaseCompleted:
 		return "Completed"
 	case PhaseError:
@@ -44,6 +51,7 @@ type Config struct {
 	Threads  int
 	URLCount int
 	Proxy    string
+	Upload   bool
 }
 
 // DefaultConfig provides sensible defaults for quick and accurate testing.
@@ -52,24 +60,52 @@ func DefaultConfig() Config {
 		Duration: 10 * time.Second,
 		Threads:  4,
 		URLCount: 5,
+		Upload:   true,
 	}
 }
 
 // Progress contains the live status emitted during a test.
 type Progress struct {
-	Phase            Phase
-	InstantSpeedMbps float64
-	AverageSpeedMbps float64
-	BytesTransferred int64
-	Elapsed          time.Duration
-	TotalDuration    time.Duration
-	Percent          float64
-	Latency          time.Duration
-	Proxy            string
-	Client           *ClientInfo
-	Targets          []TargetServer
-	Err              error
+	Phase             Phase
+	InstantSpeedMbps  float64
+	AverageSpeedMbps  float64
+	DownloadSpeedMbps float64
+	UploadSpeedMbps   float64
+	BytesTransferred  int64
+	DownloadBytes     int64
+	UploadBytes       int64
+	Elapsed           time.Duration
+	TotalDuration     time.Duration
+	Percent           float64
+	Latency           time.Duration
+	Proxy             string
+	Client            *ClientInfo
+	Targets           []TargetServer
+	Err               error
 }
+
+var zeroChunk = make([]byte, 64*1024)
+
+type zeroReader struct{}
+
+func (z zeroReader) Read(p []byte) (int, error) {
+	return copy(p, zeroChunk), nil
+}
+
+type countingReader struct {
+	r      io.Reader
+	copied *int64
+}
+
+func (cr *countingReader) Read(p []byte) (int, error) {
+	n, err := cr.r.Read(p)
+	if n > 0 {
+		atomic.AddInt64(cr.copied, int64(n))
+	}
+	return n, err
+}
+
+const maxPayloadBytes = 25 * 1024 * 1024
 
 // Tester manages the lifecycle of the Fast.com speed test.
 type Tester struct {
@@ -97,11 +133,27 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 	go func() {
 		defer close(ch)
 
+		overallStartTime := time.Now()
+
 		// 1. Initializing & token retrieval
 		ch <- Progress{
 			Phase:         PhaseConnecting,
 			Proxy:         t.cfg.Proxy,
 			TotalDuration: t.cfg.Duration,
+		}
+
+		var parsedProxy *url.URL
+		if t.cfg.Proxy != "" {
+			var err error
+			parsedProxy, err = url.Parse(t.cfg.Proxy)
+			if err != nil {
+				ch <- Progress{
+					Phase: PhaseError,
+					Proxy: t.cfg.Proxy,
+					Err:   fmt.Errorf("invalid proxy URL %q: %w", t.cfg.Proxy, err),
+				}
+				return
+			}
 		}
 
 		apiClient, err := CreateHTTPClient(t.cfg.Proxy, 6*time.Second)
@@ -114,7 +166,7 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 			return
 		}
 
-		// 1. Target retrieval
+		// Target retrieval
 		targetsResp, err := GetSpeedtestTargetsWithClient(ctx, apiClient, DefaultToken, t.cfg.URLCount)
 		if err != nil {
 			ch <- Progress{
@@ -132,8 +184,8 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 		var latencyAtomic int64
 		if len(targets) > 0 {
 			latencyClient, _ := CreateHTTPClient(t.cfg.Proxy, 4*time.Second)
-			go func(url string) {
-				if l, err := MeasureLatencyWithClient(ctx, latencyClient, url); err == nil {
+			go func(targetURL string) {
+				if l, err := MeasureLatencyWithClient(ctx, latencyClient, targetURL); err == nil {
 					atomic.StoreInt64(&latencyAtomic, int64(l))
 				}
 			}(targets[0].URL)
@@ -147,28 +199,12 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 			TotalDuration: t.cfg.Duration,
 		}
 
-		// 3. Launch concurrent download streams
-		var totalBytes int64
-		testCtx, cancel := context.WithTimeout(ctx, t.cfg.Duration)
-		defer cancel()
-
-		startTime := time.Now()
-		var wg sync.WaitGroup
-
+		// 3. Shared HTTP client for keep-alive connection reuse
 		transport := &http.Transport{
-			MaxIdleConnsPerHost: t.cfg.Threads,
+			MaxIdleConnsPerHost: t.cfg.Threads * 2,
 			DisableCompression:  true,
 		}
-		if t.cfg.Proxy != "" {
-			parsedProxy, err := url.Parse(t.cfg.Proxy)
-			if err != nil {
-				ch <- Progress{
-					Phase: PhaseError,
-					Proxy: t.cfg.Proxy,
-					Err:   fmt.Errorf("invalid proxy URL %q: %w", t.cfg.Proxy, err),
-				}
-				return
-			}
+		if parsedProxy != nil {
 			transport.Proxy = http.ProxyURL(parsedProxy)
 		} else {
 			transport.Proxy = http.ProxyFromEnvironment
@@ -177,22 +213,30 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 			Transport: transport,
 		}
 
+		// 4. Launch concurrent download streams
+		var totalBytes int64
+		downloadCtx, downloadCancel := context.WithTimeout(ctx, t.cfg.Duration)
+		defer downloadCancel()
+
+		downloadStartTime := time.Now()
+		var downloadWg sync.WaitGroup
+
 		// Distribute workers across available targets
 		for i := 0; i < t.cfg.Threads; i++ {
 			targetURL := targets[i%len(targets)].URL
-			wg.Add(1)
+			downloadWg.Add(1)
 			go func(url string) {
-				defer wg.Done()
+				defer downloadWg.Done()
 				buf := make([]byte, 64*1024)
 
 				for {
 					select {
-					case <-testCtx.Done():
+					case <-downloadCtx.Done():
 						return
 					default:
 					}
 
-					req, err := http.NewRequestWithContext(testCtx, http.MethodGet, url, nil)
+					req, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, url, nil)
 					if err != nil {
 						return
 					}
@@ -200,7 +244,6 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 
 					resp, err := httpClient.Do(req)
 					if err != nil {
-						// Context cancelled or network blip
 						continue
 					}
 
@@ -218,22 +261,22 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 			}(targetURL)
 		}
 
-		// 4. Progress monitoring loop
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
+		// Download progress monitoring loop
+		downloadTicker := time.NewTicker(100 * time.Millisecond)
+		defer downloadTicker.Stop()
 
 		var lastBytes int64
-		var lastTime = startTime
+		var lastTime = downloadStartTime
 		var smoothedSpeed float64
 
 		running := true
 		for running {
 			select {
-			case <-testCtx.Done():
+			case <-downloadCtx.Done():
 				running = false
-			case now := <-ticker.C:
+			case now := <-downloadTicker.C:
 				currentBytes := atomic.LoadInt64(&totalBytes)
-				elapsed := now.Sub(startTime)
+				elapsed := now.Sub(downloadStartTime)
 				if elapsed > t.cfg.Duration {
 					elapsed = t.cfg.Duration
 				}
@@ -246,7 +289,6 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 					instantMbps = (float64(deltaBytes) * 8) / (deltaTime * 1_000_000)
 				}
 
-				// Exponential moving average for smooth display
 				if smoothedSpeed == 0 {
 					smoothedSpeed = instantMbps
 				} else {
@@ -268,48 +310,182 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 
 				currentLatency := time.Duration(atomic.LoadInt64(&latencyAtomic))
 				ch <- Progress{
-					Phase:            PhaseTesting,
-					InstantSpeedMbps: smoothedSpeed,
-					AverageSpeedMbps: avgMbps,
-					BytesTransferred: currentBytes,
-					Elapsed:          elapsed,
-					TotalDuration:    t.cfg.Duration,
-					Percent:          percent,
-					Latency:          currentLatency,
-					Proxy:            t.cfg.Proxy,
-					Client:           &clientInfo,
-					Targets:          targets,
+					Phase:             PhaseTesting,
+					InstantSpeedMbps:  smoothedSpeed,
+					AverageSpeedMbps:  avgMbps,
+					DownloadSpeedMbps: avgMbps,
+					BytesTransferred:  currentBytes,
+					DownloadBytes:     currentBytes,
+					Elapsed:           elapsed,
+					TotalDuration:     t.cfg.Duration,
+					Percent:           percent,
+					Latency:           currentLatency,
+					Proxy:             t.cfg.Proxy,
+					Client:            &clientInfo,
+					Targets:           targets,
 				}
 			}
 		}
 
 		// Wait for download workers to finish cleanly
-		wg.Wait()
+		downloadWg.Wait()
 
-		// Final metrics
-		finalBytes := atomic.LoadInt64(&totalBytes)
-		totalElapsed := time.Since(startTime)
-		if totalElapsed > t.cfg.Duration {
-			totalElapsed = t.cfg.Duration
+		// Final download metrics
+		finalDownloadBytes := atomic.LoadInt64(&totalBytes)
+		totalDownloadElapsed := time.Since(downloadStartTime)
+		if totalDownloadElapsed > t.cfg.Duration {
+			totalDownloadElapsed = t.cfg.Duration
 		}
-		var finalAvgMbps float64
-		if totalElapsed.Seconds() > 0 {
-			finalAvgMbps = (float64(finalBytes) * 8) / (totalElapsed.Seconds() * 1_000_000)
+		var finalDownloadAvgMbps float64
+		if totalDownloadElapsed.Seconds() > 0 {
+			finalDownloadAvgMbps = (float64(finalDownloadBytes) * 8) / (totalDownloadElapsed.Seconds() * 1_000_000)
+		}
+
+		// 5. Upload phase (if enabled and context not cancelled)
+		var finalUploadBytes int64
+		var finalUploadAvgMbps float64
+
+		if t.cfg.Upload && ctx.Err() == nil {
+			var totalUploadBytes int64
+			uploadCtx, uploadCancel := context.WithTimeout(ctx, t.cfg.Duration)
+			defer uploadCancel()
+
+			uploadStartTime := time.Now()
+			var uploadWg sync.WaitGroup
+
+			for i := 0; i < t.cfg.Threads; i++ {
+				targetURL := targets[i%len(targets)].URL
+				uploadWg.Add(1)
+				go func(url string) {
+					defer uploadWg.Done()
+
+					for {
+						select {
+						case <-uploadCtx.Done():
+							return
+						default:
+						}
+
+						body := &countingReader{
+							r:      io.LimitReader(zeroReader{}, maxPayloadBytes),
+							copied: &totalUploadBytes,
+						}
+
+						req, err := http.NewRequestWithContext(uploadCtx, http.MethodPost, url, body)
+						if err != nil {
+							return
+						}
+						req.ContentLength = maxPayloadBytes
+						req.Header.Set("Content-Type", "application/octet-stream")
+						req.Header.Set("User-Agent", userAgent)
+
+						resp, err := httpClient.Do(req)
+						if err != nil {
+							continue
+						}
+						io.Copy(io.Discard, resp.Body)
+						resp.Body.Close()
+					}
+				}(targetURL)
+			}
+
+			uploadTicker := time.NewTicker(100 * time.Millisecond)
+			defer uploadTicker.Stop()
+
+			var lastUploadBytes int64
+			var lastUploadTime = uploadStartTime
+			var smoothedUploadSpeed float64
+
+			uploadRunning := true
+			for uploadRunning {
+				select {
+				case <-uploadCtx.Done():
+					uploadRunning = false
+				case now := <-uploadTicker.C:
+					currentBytes := atomic.LoadInt64(&totalUploadBytes)
+					elapsed := now.Sub(uploadStartTime)
+					if elapsed > t.cfg.Duration {
+						elapsed = t.cfg.Duration
+					}
+
+					deltaBytes := currentBytes - lastUploadBytes
+					deltaTime := now.Sub(lastUploadTime).Seconds()
+
+					var instantMbps float64
+					if deltaTime > 0 {
+						instantMbps = (float64(deltaBytes) * 8) / (deltaTime * 1_000_000)
+					}
+
+					if smoothedUploadSpeed == 0 {
+						smoothedUploadSpeed = instantMbps
+					} else {
+						smoothedUploadSpeed = (0.75 * instantMbps) + (0.25 * smoothedUploadSpeed)
+					}
+
+					lastUploadBytes = currentBytes
+					lastUploadTime = now
+
+					var avgMbps float64
+					if elapsed.Seconds() > 0 {
+						avgMbps = (float64(currentBytes) * 8) / (elapsed.Seconds() * 1_000_000)
+					}
+
+					percent := float64(elapsed) / float64(t.cfg.Duration)
+					if percent > 1.0 {
+						percent = 1.0
+					}
+
+					currentLatency := time.Duration(atomic.LoadInt64(&latencyAtomic))
+					ch <- Progress{
+						Phase:             PhaseUploading,
+						InstantSpeedMbps:  smoothedUploadSpeed,
+						AverageSpeedMbps:  avgMbps,
+						DownloadSpeedMbps: finalDownloadAvgMbps,
+						UploadSpeedMbps:   avgMbps,
+						BytesTransferred:  finalDownloadBytes + currentBytes,
+						DownloadBytes:     finalDownloadBytes,
+						UploadBytes:       currentBytes,
+						Elapsed:           elapsed,
+						TotalDuration:     t.cfg.Duration,
+						Percent:           percent,
+						Latency:           currentLatency,
+						Proxy:             t.cfg.Proxy,
+						Client:            &clientInfo,
+						Targets:           targets,
+					}
+				}
+			}
+
+			uploadWg.Wait()
+
+			finalUploadBytes = atomic.LoadInt64(&totalUploadBytes)
+			totalUploadElapsed := time.Since(uploadStartTime)
+			if totalUploadElapsed > t.cfg.Duration {
+				totalUploadElapsed = t.cfg.Duration
+			}
+			if totalUploadElapsed.Seconds() > 0 {
+				finalUploadAvgMbps = (float64(finalUploadBytes) * 8) / (totalUploadElapsed.Seconds() * 1_000_000)
+			}
 		}
 
 		finalLatency := time.Duration(atomic.LoadInt64(&latencyAtomic))
+		totalOverallElapsed := time.Since(overallStartTime)
 		ch <- Progress{
-			Phase:            PhaseCompleted,
-			InstantSpeedMbps: finalAvgMbps,
-			AverageSpeedMbps: finalAvgMbps,
-			BytesTransferred: finalBytes,
-			Elapsed:          totalElapsed,
-			TotalDuration:    t.cfg.Duration,
-			Percent:          1.0,
-			Latency:          finalLatency,
-			Proxy:            t.cfg.Proxy,
-			Client:           &clientInfo,
-			Targets:          targets,
+			Phase:             PhaseCompleted,
+			InstantSpeedMbps:  finalDownloadAvgMbps,
+			AverageSpeedMbps:  finalDownloadAvgMbps,
+			DownloadSpeedMbps: finalDownloadAvgMbps,
+			UploadSpeedMbps:   finalUploadAvgMbps,
+			BytesTransferred:  finalDownloadBytes + finalUploadBytes,
+			DownloadBytes:     finalDownloadBytes,
+			UploadBytes:       finalUploadBytes,
+			Elapsed:           totalOverallElapsed,
+			TotalDuration:     totalOverallElapsed,
+			Percent:           1.0,
+			Latency:           finalLatency,
+			Proxy:             t.cfg.Proxy,
+			Client:            &clientInfo,
+			Targets:           targets,
 		}
 	}()
 

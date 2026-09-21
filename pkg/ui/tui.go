@@ -44,6 +44,14 @@ var (
 			Bold(true).
 			Foreground(lipgloss.Color("#00E676"))
 
+	uploadStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#00B0FF"))
+
+	uploadLargeStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#00B0FF"))
+
 	mutedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#757575"))
 
@@ -180,7 +188,7 @@ func (m Model) View() string {
 
 	case fast.PhaseTesting:
 		speedStr := fast.FormatSpeed(p.InstantSpeedMbps)
-		b.WriteString(fmt.Sprintf("  %s %s\n", m.spinner.View(), speedLargeStyle.Render(speedStr)))
+		b.WriteString(fmt.Sprintf("  %s %s %s\n", m.spinner.View(), speedLargeStyle.Render(speedStr), mutedStyle.Render("(download)")))
 		b.WriteString("\n")
 
 		// Progress bar
@@ -190,7 +198,63 @@ func (m Model) View() string {
 		b.WriteString(fmt.Sprintf("  %s %s\n",
 			labelStyle.Render("Transferred:"),
 			valueStyle.Render(fmt.Sprintf("%s (avg %s)",
-				fast.FormatBytes(p.BytesTransferred),
+				fast.FormatBytes(p.DownloadBytes),
+				fast.FormatSpeed(p.AverageSpeedMbps)))))
+
+		if p.Latency > 0 {
+			b.WriteString(fmt.Sprintf("  %s %s\n",
+				labelStyle.Render("Latency:"),
+				valueStyle.Render(fmt.Sprintf("%d ms", p.Latency.Milliseconds()))))
+		}
+
+		if p.Client != nil {
+			clientLoc := fmt.Sprintf("%s, %s", p.Client.Location.City, p.Client.Location.Country)
+			b.WriteString(fmt.Sprintf("  %s %s (%s)\n",
+				labelStyle.Render("Client:"),
+				valueStyle.Render(p.Client.ISP),
+				mutedStyle.Render(clientLoc)))
+		}
+
+		if len(p.Targets) > 0 {
+			targetLoc := fmt.Sprintf("%s, %s", p.Targets[0].Location.City, p.Targets[0].Location.Country)
+			b.WriteString(fmt.Sprintf("  %s %s\n",
+				labelStyle.Render("Server Node:"),
+				valueStyle.Render(targetLoc)))
+		}
+
+		if p.Proxy != "" {
+			b.WriteString(fmt.Sprintf("  %s %s\n",
+				labelStyle.Render("Proxy:"),
+				mutedStyle.Render(p.Proxy)))
+		}
+
+		rem := p.TotalDuration - p.Elapsed
+		if rem < 0 {
+			rem = 0
+		}
+		b.WriteString(fmt.Sprintf("  %s %s remaining\n",
+			labelStyle.Render("Time:"),
+			mutedStyle.Render(fmt.Sprintf("%.1fs / %.1fs", p.Elapsed.Seconds(), p.TotalDuration.Seconds()))))
+
+		b.WriteString("\n" + mutedStyle.Render("  Press 'q' or Ctrl+C to abort.") + "\n")
+
+	case fast.PhaseUploading:
+		speedStr := fast.FormatSpeed(p.InstantSpeedMbps)
+		b.WriteString(fmt.Sprintf("  %s %s %s\n", m.spinner.View(), uploadLargeStyle.Render(speedStr), mutedStyle.Render("(upload)")))
+		b.WriteString("\n")
+
+		// Progress bar
+		b.WriteString("  " + m.progress.ViewAs(p.Percent) + "\n\n")
+
+		// Stats
+		b.WriteString(fmt.Sprintf("  %s %s\n",
+			labelStyle.Render("Download Speed:"),
+			speedStyle.Render(fast.FormatSpeed(p.DownloadSpeedMbps))))
+
+		b.WriteString(fmt.Sprintf("  %s %s\n",
+			labelStyle.Render("Transferred:"),
+			valueStyle.Render(fmt.Sprintf("%s (avg %s)",
+				fast.FormatBytes(p.UploadBytes),
 				fast.FormatSpeed(p.AverageSpeedMbps)))))
 
 		if p.Latency > 0 {
@@ -235,8 +299,19 @@ func (m Model) View() string {
 
 		card.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF")).Render("SPEED TEST RESULTS") + "\n\n")
 
-		speedFinal := speedStyle.Render(fast.FormatSpeed(p.AverageSpeedMbps))
-		card.WriteString(fmt.Sprintf("%s %s\n\n", labelStyle.Render("Download Speed:"), speedFinal))
+		downloadSpeed := p.DownloadSpeedMbps
+		if downloadSpeed == 0 {
+			downloadSpeed = p.AverageSpeedMbps
+		}
+
+		speedFinal := speedStyle.Render(fast.FormatSpeed(downloadSpeed))
+		card.WriteString(fmt.Sprintf("%s %s\n", labelStyle.Render("Download Speed:"), speedFinal))
+
+		if p.UploadSpeedMbps > 0 {
+			uploadFinal := uploadStyle.Render(fast.FormatSpeed(p.UploadSpeedMbps))
+			card.WriteString(fmt.Sprintf("%s %s\n", labelStyle.Render("Upload Speed:"), uploadFinal))
+		}
+		card.WriteString("\n")
 
 		if p.Latency > 0 {
 			card.WriteString(fmt.Sprintf("%s %s\n",
@@ -244,9 +319,16 @@ func (m Model) View() string {
 				valueStyle.Render(fmt.Sprintf("%d ms", p.Latency.Milliseconds()))))
 		}
 
-		card.WriteString(fmt.Sprintf("%s %s\n",
-			labelStyle.Render("Data Transferred:"),
-			valueStyle.Render(fast.FormatBytes(p.BytesTransferred))))
+		if p.UploadBytes > 0 {
+			card.WriteString(fmt.Sprintf("%s %s %s\n",
+				labelStyle.Render("Data Transferred:"),
+				valueStyle.Render(fast.FormatBytes(p.BytesTransferred)),
+				mutedStyle.Render(fmt.Sprintf("(↓ %s  ↑ %s)", fast.FormatBytes(p.DownloadBytes), fast.FormatBytes(p.UploadBytes)))))
+		} else {
+			card.WriteString(fmt.Sprintf("%s %s\n",
+				labelStyle.Render("Data Transferred:"),
+				valueStyle.Render(fast.FormatBytes(p.BytesTransferred))))
+		}
 
 		card.WriteString(fmt.Sprintf("%s %s\n\n",
 			labelStyle.Render("Total Time:"),

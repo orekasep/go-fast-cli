@@ -142,3 +142,64 @@ func TestCreateHTTPClientProxy(t *testing.T) {
 		t.Fatal("expected error for invalid proxy URL, got nil")
 	}
 }
+
+func TestPhaseStrings(t *testing.T) {
+	tests := []struct {
+		phase    Phase
+		expected string
+	}{
+		{PhaseInit, "Initializing"},
+		{PhaseConnecting, "Connecting"},
+		{PhaseTesting, "Downloading"},
+		{PhaseDownloading, "Downloading"},
+		{PhaseUploading, "Uploading"},
+		{PhaseCompleted, "Completed"},
+		{PhaseError, "Error"},
+	}
+
+	for _, tt := range tests {
+		if tt.phase.String() != tt.expected {
+			t.Errorf("Phase(%d).String() = %s; want %s", tt.phase, tt.phase.String(), tt.expected)
+		}
+	}
+}
+
+func TestTestSummaryJSON(t *testing.T) {
+	summary := TestSummary{
+		DownloadSpeed: 45.5,
+		UploadSpeed:   18.2,
+		Latency:       25 * time.Millisecond,
+		TotalBytes:    30000000,
+		DownloadBytes: 20000000,
+		UploadBytes:   10000000,
+		Duration:      10 * time.Second,
+		Client: ClientInfo{
+			IP:  "1.2.3.4",
+			ISP: "TestISP",
+		},
+	}
+
+	data, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("failed to marshal TestSummary: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	if parsed["download_speed_mbps"] != 45.5 {
+		t.Errorf("expected download_speed_mbps 45.5, got %v", parsed["download_speed_mbps"])
+	}
+	if parsed["upload_speed_mbps"] != 18.2 {
+		t.Errorf("expected upload_speed_mbps 18.2, got %v", parsed["upload_speed_mbps"])
+	}
+	if parsed["download_bytes"] != float64(20000000) {
+		t.Errorf("expected download_bytes 20000000, got %v", parsed["download_bytes"])
+	}
+	if parsed["upload_bytes"] != float64(10000000) {
+		t.Errorf("expected upload_bytes 10000000, got %v", parsed["upload_bytes"])
+	}
+}
+
