@@ -20,14 +20,14 @@ A simple, fast, and elegant command-line tool written in Go to test your interne
 
 ### Via Homebrew (macOS / Linux)
 
-**One-line install:**
+Install directly:
 ```bash
-brew install https://raw.githubusercontent.com/orekasep/go-fast-cli/main/Formula/go-fast-cli.rb
+brew install orekasep/tap/go-fast-cli
 ```
 
-**Or via tap:**
+Or tap first, then install:
 ```bash
-brew tap orekasep/tap https://github.com/orekasep/go-fast-cli
+brew tap orekasep/tap
 brew install go-fast-cli
 ```
 
