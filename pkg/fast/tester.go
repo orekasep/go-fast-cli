@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,6 +43,7 @@ type Config struct {
 	Duration time.Duration
 	Threads  int
 	URLCount int
+	Proxy    string
 }
 
 // DefaultConfig provides sensible defaults for quick and accurate testing.
@@ -63,6 +65,7 @@ type Progress struct {
 	TotalDuration    time.Duration
 	Percent          float64
 	Latency          time.Duration
+	Proxy            string
 	Client           *ClientInfo
 	Targets          []TargetServer
 	Err              error
@@ -97,14 +100,26 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 		// 1. Initializing & token retrieval
 		ch <- Progress{
 			Phase:         PhaseConnecting,
+			Proxy:         t.cfg.Proxy,
 			TotalDuration: t.cfg.Duration,
 		}
 
-		// 1. Target retrieval
-		targetsResp, err := GetSpeedtestTargets(ctx, DefaultToken, t.cfg.URLCount)
+		apiClient, err := CreateHTTPClient(t.cfg.Proxy, 6*time.Second)
 		if err != nil {
 			ch <- Progress{
 				Phase: PhaseError,
+				Proxy: t.cfg.Proxy,
+				Err:   fmt.Errorf("failed to configure proxy: %w", err),
+			}
+			return
+		}
+
+		// 1. Target retrieval
+		targetsResp, err := GetSpeedtestTargetsWithClient(ctx, apiClient, DefaultToken, t.cfg.URLCount)
+		if err != nil {
+			ch <- Progress{
+				Phase: PhaseError,
+				Proxy: t.cfg.Proxy,
 				Err:   fmt.Errorf("failed to get targets: %w", err),
 			}
 			return
@@ -116,8 +131,9 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 		// 2. Measure latency concurrently so download testing begins immediately
 		var latencyAtomic int64
 		if len(targets) > 0 {
+			latencyClient, _ := CreateHTTPClient(t.cfg.Proxy, 4*time.Second)
 			go func(url string) {
-				if l, err := MeasureLatency(ctx, url); err == nil {
+				if l, err := MeasureLatencyWithClient(ctx, latencyClient, url); err == nil {
 					atomic.StoreInt64(&latencyAtomic, int64(l))
 				}
 			}(targets[0].URL)
@@ -125,6 +141,7 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 
 		ch <- Progress{
 			Phase:         PhaseConnecting,
+			Proxy:         t.cfg.Proxy,
 			Client:        &clientInfo,
 			Targets:       targets,
 			TotalDuration: t.cfg.Duration,
@@ -137,11 +154,27 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 
 		startTime := time.Now()
 		var wg sync.WaitGroup
+
+		transport := &http.Transport{
+			MaxIdleConnsPerHost: t.cfg.Threads,
+			DisableCompression:  true,
+		}
+		if t.cfg.Proxy != "" {
+			parsedProxy, err := url.Parse(t.cfg.Proxy)
+			if err != nil {
+				ch <- Progress{
+					Phase: PhaseError,
+					Proxy: t.cfg.Proxy,
+					Err:   fmt.Errorf("invalid proxy URL %q: %w", t.cfg.Proxy, err),
+				}
+				return
+			}
+			transport.Proxy = http.ProxyURL(parsedProxy)
+		} else {
+			transport.Proxy = http.ProxyFromEnvironment
+		}
 		httpClient := &http.Client{
-			Transport: &http.Transport{
-				MaxIdleConnsPerHost: t.cfg.Threads,
-				DisableCompression:  true,
-			},
+			Transport: transport,
 		}
 
 		// Distribute workers across available targets
@@ -243,6 +276,7 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 					TotalDuration:    t.cfg.Duration,
 					Percent:          percent,
 					Latency:          currentLatency,
+					Proxy:            t.cfg.Proxy,
 					Client:           &clientInfo,
 					Targets:          targets,
 				}
@@ -273,6 +307,7 @@ func (t *Tester) Run(ctx context.Context) <-chan Progress {
 			TotalDuration:    t.cfg.Duration,
 			Percent:          1.0,
 			Latency:          finalLatency,
+			Proxy:            t.cfg.Proxy,
 			Client:           &clientInfo,
 			Targets:          targets,
 		}

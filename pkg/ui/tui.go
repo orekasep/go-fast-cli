@@ -214,6 +214,12 @@ func (m Model) View() string {
 				valueStyle.Render(targetLoc)))
 		}
 
+		if p.Proxy != "" {
+			b.WriteString(fmt.Sprintf("  %s %s\n",
+				labelStyle.Render("Proxy:"),
+				mutedStyle.Render(p.Proxy)))
+		}
+
 		rem := p.TotalDuration - p.Elapsed
 		if rem < 0 {
 			rem = 0
@@ -263,6 +269,12 @@ func (m Model) View() string {
 				labelStyle.Render("CDN Target:"),
 				valueStyle.Render(p.Targets[0].Location.City),
 				p.Targets[0].Location.Country))
+		}
+
+		if p.Proxy != "" {
+			card.WriteString(fmt.Sprintf("%s %s\n",
+				labelStyle.Render("Proxy:"),
+				mutedStyle.Render(p.Proxy)))
 		}
 
 		b.WriteString(cardStyle.Render(card.String()) + "\n\n")

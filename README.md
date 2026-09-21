@@ -88,9 +88,27 @@ Server Node:      Singapore, SG
 | `-duration` | `-d` | `10s` | Test duration (e.g., `5s`, `10s`, `15s`) |
 | `-threads` | `-t` | `4` | Number of concurrent download streams |
 | `-urls` | | `5` | Number of CDN target servers to query |
+| `-proxy` | `-p` | `""` | Proxy URL (`http://`, `https://`, `socks5://`) |
 | `-simple` | | `false` | Output simple text line (no TUI) |
 | `-json` | | `false` | Output test results as JSON |
 | `-version` | `-v` | `false` | Print version and exit |
+
+### Proxy Support
+
+You can route all traffic through an HTTP, HTTPS, or SOCKS5 proxy via the `-proxy` flag:
+
+```bash
+# HTTP proxy
+fast -proxy http://127.0.0.1:8080
+
+# Authenticated HTTP proxy
+fast -proxy http://user:pass@127.0.0.1:8080
+
+# SOCKS5 proxy
+fast -proxy socks5://127.0.0.1:1080
+```
+
+Standard proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`) are also respected automatically when `-proxy` is not specified.
 
 ---
 

@@ -116,3 +116,29 @@ func TestDefaultTokenFallback(t *testing.T) {
 		t.Errorf("GetToken with cancelled context = %s; want DefaultToken %s", token, DefaultToken)
 	}
 }
+
+func TestCreateHTTPClientProxy(t *testing.T) {
+	// Test HTTP proxy
+	client, err := CreateHTTPClient("http://127.0.0.1:8080", 5*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error creating HTTP proxy client: %v", err)
+	}
+	if client == nil || client.Transport == nil {
+		t.Fatal("expected non-nil client and transport")
+	}
+
+	// Test SOCKS5 proxy
+	socksClient, err := CreateHTTPClient("socks5://127.0.0.1:1080", 5*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error creating SOCKS5 proxy client: %v", err)
+	}
+	if socksClient == nil || socksClient.Transport == nil {
+		t.Fatal("expected non-nil socks5 client and transport")
+	}
+
+	// Test Invalid proxy URL
+	_, err = CreateHTTPClient("://invalid-url", 5*time.Second)
+	if err == nil {
+		t.Fatal("expected error for invalid proxy URL, got nil")
+	}
+}

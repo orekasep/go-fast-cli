@@ -23,6 +23,7 @@ func main() {
 		durationFlag time.Duration
 		threadsFlag  int
 		urlCountFlag int
+		proxyFlag    string
 		simpleFlag   bool
 		jsonFlag     bool
 		versionFlag  bool
@@ -33,6 +34,8 @@ func main() {
 	flag.IntVar(&threadsFlag, "threads", 4, "Number of concurrent download streams")
 	flag.IntVar(&threadsFlag, "t", 4, "Number of concurrent download streams (shorthand)")
 	flag.IntVar(&urlCountFlag, "urls", 5, "Number of CDN target servers to request")
+	flag.StringVar(&proxyFlag, "proxy", "", "Proxy URL (e.g., http://127.0.0.1:8080, socks5://127.0.0.1:1080)")
+	flag.StringVar(&proxyFlag, "p", "", "Proxy URL (shorthand)")
 	flag.BoolVar(&simpleFlag, "simple", false, "Output in simple text format (no TUI)")
 	flag.BoolVar(&jsonFlag, "json", false, "Output results as JSON")
 	flag.BoolVar(&versionFlag, "version", false, "Print version and exit")
@@ -59,6 +62,7 @@ func main() {
 		Duration: durationFlag,
 		Threads:  threadsFlag,
 		URLCount: urlCountFlag,
+		Proxy:    proxyFlag,
 	}
 	tester := fast.NewTester(cfg)
 
@@ -121,6 +125,9 @@ func runSimple(ctx context.Context, tester *fast.Tester) {
 	if len(lastProgress.Targets) > 0 {
 		fmt.Printf("Server Node:      %s, %s\n", lastProgress.Targets[0].Location.City, lastProgress.Targets[0].Location.Country)
 	}
+	if lastProgress.Proxy != "" {
+		fmt.Printf("Proxy:            %s\n", lastProgress.Proxy)
+	}
 }
 
 func runJSON(ctx context.Context, tester *fast.Tester, cfg fast.Config) {
@@ -146,6 +153,7 @@ func runJSON(ctx context.Context, tester *fast.Tester, cfg fast.Config) {
 		Latency:       time.Duration(lastProgress.Latency.Milliseconds()),
 		TotalBytes:    lastProgress.BytesTransferred,
 		Duration:      time.Duration(lastProgress.Elapsed.Seconds()),
+		Proxy:         cfg.Proxy,
 		Client:        client,
 		Targets:       lastProgress.Targets,
 	}

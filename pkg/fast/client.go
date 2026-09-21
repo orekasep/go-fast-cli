@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"time"
 )
@@ -56,14 +57,45 @@ type TestSummary struct {
 	Latency       time.Duration  `json:"latency_ms"`
 	TotalBytes    int64          `json:"total_bytes"`
 	Duration      time.Duration  `json:"duration_sec"`
+	Proxy         string         `json:"proxy,omitempty"`
 	Client        ClientInfo     `json:"client"`
 	Targets       []TargetServer `json:"targets"`
+}
+
+// CreateHTTPClient returns an *http.Client configured with an optional proxy and timeout.
+// If proxyURL is empty, standard environment variables (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY) are used.
+func CreateHTTPClient(proxyURL string, timeout time.Duration) (*http.Client, error) {
+	transport := &http.Transport{
+		DisableCompression: true,
+	}
+
+	if proxyURL != "" {
+		parsedProxy, err := url.Parse(proxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy URL %q: %w", proxyURL, err)
+		}
+		transport.Proxy = http.ProxyURL(parsedProxy)
+	} else {
+		transport.Proxy = http.ProxyFromEnvironment
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+	}, nil
 }
 
 // GetToken attempts to dynamically fetch the Fast.com API token from the app JS bundle.
 // If extraction fails for any reason, it returns the reliable DefaultToken.
 func GetToken(ctx context.Context) string {
-	client := &http.Client{Timeout: 4 * time.Second}
+	return GetTokenWithClient(ctx, nil)
+}
+
+// GetTokenWithClient attempts to fetch the token using the specified HTTP client.
+func GetTokenWithClient(ctx context.Context, client *http.Client) string {
+	if client == nil {
+		client = &http.Client{Timeout: 4 * time.Second}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fastURL, nil)
 	if err != nil {
@@ -114,30 +146,37 @@ func GetToken(ctx context.Context) string {
 }
 
 // GetSpeedtestTargets queries the Fast.com API for available download targets and client metadata.
-// It tries with the default token first for instant response, and dynamically fetches a fresh token if unauthorized.
 func GetSpeedtestTargets(ctx context.Context, token string, count int) (*SpeedtestResponse, error) {
+	return GetSpeedtestTargetsWithClient(ctx, nil, token, count)
+}
+
+// GetSpeedtestTargetsWithClient queries the Fast.com API using the specified HTTP client.
+func GetSpeedtestTargetsWithClient(ctx context.Context, client *http.Client, token string, count int) (*SpeedtestResponse, error) {
 	if token == "" {
 		token = DefaultToken
 	}
 	if count <= 0 {
 		count = 5
 	}
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
 
-	res, err := fetchTargets(ctx, token, count)
+	res, err := fetchTargets(ctx, client, token, count)
 	if err == nil {
 		return res, nil
 	}
 
 	// If failed, try fetching a dynamic token from fast.com and retry
-	freshToken := GetToken(ctx)
+	freshToken := GetTokenWithClient(ctx, client)
 	if freshToken != token && freshToken != "" {
-		return fetchTargets(ctx, freshToken, count)
+		return fetchTargets(ctx, client, freshToken, count)
 	}
 
 	return nil, err
 }
 
-func fetchTargets(ctx context.Context, token string, count int) (*SpeedtestResponse, error) {
+func fetchTargets(ctx context.Context, client *http.Client, token string, count int) (*SpeedtestResponse, error) {
 	endpoint := fmt.Sprintf("%s?https=true&token=%s&urlCount=%d", apiBaseURL, token, count)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -145,7 +184,6 @@ func fetchTargets(ctx context.Context, token string, count int) (*SpeedtestRespo
 	}
 	req.Header.Set("User-Agent", userAgent)
 
-	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query Fast.com API: %w", err)
@@ -170,7 +208,14 @@ func fetchTargets(ctx context.Context, token string, count int) (*SpeedtestRespo
 
 // MeasureLatency measures the round-trip latency to a target URL.
 func MeasureLatency(ctx context.Context, targetURL string) (time.Duration, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	return MeasureLatencyWithClient(ctx, nil, targetURL)
+}
+
+// MeasureLatencyWithClient measures the round-trip latency using the provided HTTP client.
+func MeasureLatencyWithClient(ctx context.Context, client *http.Client, targetURL string) (time.Duration, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, targetURL, nil)
 	if err != nil {
 		return 0, err
