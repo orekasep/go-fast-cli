@@ -17,6 +17,17 @@ A simple, fast, and elegant command-line tool written in Go to test your interne
 
 ## Installation
 
+### Via Homebrew (macOS / Linux)
+
+```bash
+brew install orekasep/tap/go-fast-cli
+```
+*Or via tap:*
+```bash
+brew tap orekasep/tap
+brew install go-fast-cli
+```
+
 ### Download Prebuilt Binaries (Windows, macOS, Linux)
 Pre-compiled standalone binaries for **Windows** (x86_64, ARM64), **macOS** (Apple Silicon, Intel), and **Linux** (x86_64, ARM64) are available on the [**Releases Page**](https://github.com/orekasep/go-fast-cli/releases/latest).
 
