@@ -1,0 +1,17 @@
+VERIFICATION
+Verification is intended to assist the Chocolatey moderators and community
+in verifying that this package's contents are trustworthy.
+
+The packages downloaded are the official release archives published by the upstream author on GitHub:
+https://github.com/orekasep/go-fast-cli/releases/tag/v1.1.0
+
+Download URLs:
+- x86_64: https://github.com/orekasep/go-fast-cli/releases/download/v1.1.0/go-fast-cli_v1.1.0_windows-amd64.zip
+- ARM64:  https://github.com/orekasep/go-fast-cli/releases/download/v1.1.0/go-fast-cli_v1.1.0_windows-arm64.zip
+
+Checksums (SHA256):
+- x86_64: ec0d370740006a0ad258eec4822c54fa8358d6e9e474a03fd73f67a5fcf919d6
+- ARM64:  8c448936a891b0e7165589ad8c8b483ccc39786b0223a2db55da0efc65698e33
+
+Official Checksum File:
+https://github.com/orekasep/go-fast-cli/releases/download/v1.1.0/checksums.txt

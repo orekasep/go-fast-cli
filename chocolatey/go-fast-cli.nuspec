@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>go-fast-cli</id>
+    <version>1.1.0</version>
+    <packageSourceUrl>https://github.com/orekasep/go-fast-cli/tree/main/chocolatey</packageSourceUrl>
+    <owners>orekasep</owners>
+    <title>go-fast-cli</title>
+    <authors>orekasep</authors>
+    <projectUrl>https://github.com/orekasep/go-fast-cli</projectUrl>
+    <licenseUrl>https://github.com/orekasep/go-fast-cli/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/orekasep/go-fast-cli</projectSourceUrl>
+    <docsUrl>https://github.com/orekasep/go-fast-cli#readme</docsUrl>
+    <bugTrackerUrl>https://github.com/orekasep/go-fast-cli/issues</bugTrackerUrl>
+    <tags>fast fast.com speedtest cli tui bandwidth download upload speed latency netflix</tags>
+    <summary>Simple, fast internet speed testing CLI tool using Fast.com with a real-time TUI</summary>
+    <description>
+`go-fast-cli` is a lightweight, fast, and elegant command-line tool written in Go to measure your internet download and upload speeds using Netflix's Fast.com service.
+
+### Features
+- **Instant Connection**: Uses Fast.com API with dynamic fallback token retrieval.
+- **Full Dual-Direction Testing**: Measures both download and upload speeds with concurrent streams.
+- **Interactive TUI**: Live animated spinner, progress bar, real-time speed meter, bytes counter, latency probe, and completion summary card.
+- **Accurate Throughput**: Multi-stream concurrent transfers with exponential moving average (EMA) smoothing and atomic byte accounting.
+- **Multiple Output Modes**:
+  - Full interactive TUI (default)
+  - Non-interactive plain text (`--simple`) for CI / logs
+  - Structured JSON (`--json`) for scripting and automation
+- **Clean Interrupts**: Abort gracefully anytime with `q`, `Esc`, or `Ctrl+C`.
+    </description>
+    <releaseNotes>https://github.com/orekasep/go-fast-cli/releases/tag/v1.1.0</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

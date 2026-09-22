@@ -31,6 +31,20 @@ brew tap orekasep/tap
 brew install go-fast-cli
 ```
 
+### Via Chocolatey (Windows)
+
+**Install from Chocolatey:**
+```powershell
+choco install go-fast-cli
+```
+
+**Or build and install locally from source:**
+```powershell
+cd chocolatey
+choco pack
+choco install go-fast-cli --source .
+```
+
 ### Download Prebuilt Binaries (Windows, macOS, Linux)
 Pre-compiled standalone binaries for **Windows** (x86_64, ARM64), **macOS** (Apple Silicon, Intel), and **Linux** (x86_64, ARM64) are available on the [**Releases Page**](https://github.com/orekasep/go-fast-cli/releases/latest).
 

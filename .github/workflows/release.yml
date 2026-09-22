@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -107,3 +108,33 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  chocolatey:
+    name: Package & Publish Chocolatey
+    needs: publish
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Chocolatey Package
+        run: |
+          cd chocolatey
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          (Get-Content go-fast-cli.nuspec) -replace '<version>[^<]+</version>', "<version>$ver</version>" | Set-Content go-fast-cli.nuspec
+          choco pack go-fast-cli.nuspec
+
+      - name: Upload Chocolatey Package to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: chocolatey/*.nupkg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to Chocolatey Community Repository
+        if: env.CHOCOLATEY_API_KEY != ''
+        run: |
+          choco apikey --key "${{ secrets.CHOCOLATEY_API_KEY }}" --source https://push.chocolatey.org/
+          choco push chocolatey/*.nupkg --source https://push.chocolatey.org/
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
